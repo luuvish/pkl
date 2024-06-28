@@ -45,7 +45,7 @@ public final class StackFrameTransformers {
         return frame;
       };
 
-  public static StackFrameTransformer replacePackageUriWithSourceCodeUrl =
+  public static final StackFrameTransformer replacePackageUriWithSourceCodeUrl =
       frame -> {
         var uri = URI.create(frame.getModuleUri());
         if (!uri.getScheme().equalsIgnoreCase("package")) {
@@ -108,7 +108,7 @@ public final class StackFrameTransformers {
   public static StackFrameTransformer createDefault(PklSettings settings) {
     return defaultTransformer
         // order is relevant
-        .andThen(convertFilePathToUriScheme(settings.getEditor().getUrlScheme()));
+        .andThen(convertFilePathToUriScheme(settings.editor().urlScheme()));
   }
 
   private static StackFrameTransformer loadFromServiceProviders() {

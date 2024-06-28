@@ -3,4 +3,14 @@
 
 /docs/** linguist-documentation
 
-*.pkl linguist-language=Groovy
+*.pcf linguist-language=Pkl
+PklProject linguist-language=Pkl
+
+* text eol=lf
+*.bat text eol=crlf
+
+*.gif binary
+*.jar binary
+*.woff2 binary
+*.pem binary
+*.png binary

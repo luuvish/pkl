@@ -19,7 +19,6 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.LoopNode;
-import org.graalvm.collections.EconomicMap;
 import org.pkl.core.ast.expression.binary.GreaterThanNode;
 import org.pkl.core.ast.expression.binary.GreaterThanNodeGen;
 import org.pkl.core.ast.expression.binary.LessThanNode;
@@ -27,13 +26,11 @@ import org.pkl.core.ast.expression.binary.LessThanNodeGen;
 import org.pkl.core.ast.internal.IsInstanceOfNode;
 import org.pkl.core.ast.internal.IsInstanceOfNodeGen;
 import org.pkl.core.ast.lambda.*;
-import org.pkl.core.ast.member.ObjectMember;
 import org.pkl.core.runtime.*;
 import org.pkl.core.stdlib.*;
 import org.pkl.core.stdlib.base.CollectionNodes.CompareByNode;
 import org.pkl.core.stdlib.base.CollectionNodes.CompareNode;
 import org.pkl.core.stdlib.base.CollectionNodes.CompareWithNode;
-import org.pkl.core.util.EconomicMaps;
 
 // duplication between ListNodes and SetNodes is "intentional"
 // (sharing nodes between VmCollection subtypes results in
@@ -725,10 +722,10 @@ public final class SetNodes {
       while (iterator.hasNext()) {
         var elem = iterator.next();
         var cmpResult = applyLambdaNode.execute(function, elem, result);
-        if (cmpResult instanceof Boolean) {
-          if ((boolean) cmpResult) result = elem;
-        } else if (cmpResult instanceof Long) { // deprecated
-          if ((long) cmpResult < 0) result = elem;
+        if (cmpResult instanceof Boolean b) {
+          if (b) result = elem;
+        } else if (cmpResult instanceof Long l) { // deprecated
+          if (l < 0) result = elem;
         } else {
           CompilerDirectives.transferToInterpreter();
           throw exceptionBuilder()
@@ -754,10 +751,10 @@ public final class SetNodes {
       while (iterator.hasNext()) {
         var elem = iterator.next();
         var cmpResult = applyLambdaNode.execute(function, elem, result);
-        if (cmpResult instanceof Boolean) {
-          if ((boolean) cmpResult) result = elem;
-        } else if (cmpResult instanceof Long) { // deprecated
-          if ((long) cmpResult < 0) result = elem;
+        if (cmpResult instanceof Boolean b) {
+          if (b) result = elem;
+        } else if (cmpResult instanceof Long l) { // deprecated
+          if (l < 0) result = elem;
         } else {
           CompilerDirectives.transferToInterpreter();
           throw exceptionBuilder()
@@ -893,10 +890,10 @@ public final class SetNodes {
       while (iterator.hasNext()) {
         var elem = iterator.next();
         var cmpResult = applyLambdaNode.execute(function, elem, result);
-        if (cmpResult instanceof Boolean) {
-          if ((boolean) cmpResult) result = elem;
-        } else if (cmpResult instanceof Long) { // deprecated
-          if ((long) cmpResult < 0) result = elem;
+        if (cmpResult instanceof Boolean b) {
+          if (b) result = elem;
+        } else if (cmpResult instanceof Long l) { // deprecated
+          if (l < 0) result = elem;
         } else {
           CompilerDirectives.transferToInterpreter();
           throw exceptionBuilder()
@@ -922,10 +919,10 @@ public final class SetNodes {
       while (iterator.hasNext()) {
         var elem = iterator.next();
         var cmpResult = applyLambdaNode.execute(function, result, elem);
-        if (cmpResult instanceof Boolean) {
-          if ((boolean) cmpResult) result = elem;
-        } else if (cmpResult instanceof Long) { // deprecated
-          if ((long) cmpResult < 0) result = elem;
+        if (cmpResult instanceof Boolean b) {
+          if (b) result = elem;
+        } else if (cmpResult instanceof Long l) { // deprecated
+          if (l < 0) result = elem;
         } else {
           CompilerDirectives.transferToInterpreter();
           throw exceptionBuilder()
@@ -1052,11 +1049,7 @@ public final class SetNodes {
     @Specialization
     @TruffleBoundary
     protected VmListing eval(VmSet self) {
-      return new VmListing(
-          VmUtils.createEmptyMaterializedFrame(),
-          BaseModule.getListingClass().getPrototype(),
-          toObjectMembers(self),
-          self.getLength());
+      return self.toListing();
     }
   }
 
@@ -1064,11 +1057,7 @@ public final class SetNodes {
     @Specialization
     @TruffleBoundary
     protected VmDynamic eval(VmSet self) {
-      return new VmDynamic(
-          VmUtils.createEmptyMaterializedFrame(),
-          BaseModule.getDynamicClass().getPrototype(),
-          toObjectMembers(self),
-          self.getLength());
+      return self.toDynamic();
     }
   }
 
@@ -1109,18 +1098,5 @@ public final class SetNodes {
 
       return builder.build();
     }
-  }
-
-  private static EconomicMap<Object, ObjectMember> toObjectMembers(VmSet self) {
-    var result = EconomicMaps.<Object, ObjectMember>create(self.getLength());
-
-    long idx = 0;
-    for (var element : self) {
-      EconomicMaps.put(
-          result, idx, VmUtils.createSyntheticObjectElement(String.valueOf(idx), element));
-      idx += 1;
-    }
-
-    return result;
   }
 }

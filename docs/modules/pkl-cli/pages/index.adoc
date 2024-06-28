@@ -8,6 +8,7 @@ include::ROOT:partial$component-attributes.adoc[]
 :uri-pkl-linux-amd64-download: {uri-sonatype-snapshot-download}&a=pkl-cli-linux-amd64&e=bin
 :uri-pkl-linux-aarch64-download: {uri-sonatype-snapshot-download}&a=pkl-cli-linux-aarch64&e=bin
 :uri-pkl-alpine-download: {uri-sonatype-snapshot-download}&a=pkl-cli-alpine-linux-amd64&e=bin
+:uri-pkl-windows-download: {uri-sonatype-snapshot-download}&a=pkl-cli-windows-amd64&e=exe
 :uri-pkl-java-download: {uri-sonatype-snapshot-download}&a=pkl-cli-java&e=jar
 
 ifdef::is-release-version[]
@@ -16,6 +17,7 @@ ifdef::is-release-version[]
 :uri-pkl-linux-amd64-download: {github-releases}/pkl-linux-amd64
 :uri-pkl-linux-aarch64-download: {github-releases}/pkl-linux-aarch64
 :uri-pkl-alpine-download: {github-releases}/pkl-alpine-linux-amd64
+:uri-pkl-windows-download: {github-releases}/pkl-windows-amd64.exe
 :uri-pkl-java-download: {uri-maven-repo}/org/pkl-lang/pkl-cli-java/{pkl-artifact-version}/pkl-cli-java-{pkl-artifact-version}.jar
 endif::[]
 
@@ -23,6 +25,7 @@ endif::[]
 :uri-pkl-cli-main-sources: {uri-github-tree}/pkl-cli/src/main/kotlin/org/pkl/cli
 :uri-pkl-cli-CliEvaluatorOptions: {uri-pkl-cli-main-sources}/CliEvaluatorOptions.kt
 :uri-certificates: {uri-github-tree}/pkl-commons-cli/src/main/resources/org/pkl/commons/cli/commands
+:uri-ci-artifacts: https://s01.oss.sonatype.org/content/groups/public/org/pkl-lang/
 
 The `pkl` command-line interface (CLI) evaluates Pkl modules and writes their output to the console or a file.
 For interactive development, the CLI includes a Read-Eval-Print Loop (REPL).
@@ -36,9 +39,10 @@ The CLI comes in multiple flavors:
 * Native Linux executable for amd64
 * Native Linux executable for aarch64
 * Native Alpine Linux executable for amd64 (cross-compiled and tested on Oracle Linux 8)
-* Java executable (tested with Java 11/17 on macOS and Oracle Linux)
+* Native Windows executable for amd64 (tested on Windows Server 2022)
+* Java executable (tested with Java 17/21 on macOS and Oracle Linux)
 
-On macOS and Linux, we recommend using the native executables.
+On macOS, Linux, and Windows, we recommend using the native executables.
 They are self-contained, start up instantly, and run complex Pkl code much faster than the Java executable.
 
 .What is the Difference Between the Linux and Alpine Linux Executables?
@@ -49,7 +53,7 @@ whereas, the Alpine Linux executable is statically linked against _musl libc_ an
 ====
 
 The Java executable works on multiple platforms and has a smaller binary size than the native executables.
-However, it requires a Java 11 (or higher) runtime on the system path, has a noticeable startup delay,
+However, it requires a Java 17 (or higher) runtime on the system path, has a noticeable startup delay,
 and runs complex Pkl code slower than the native executables.
 
 All flavors are built from the same codebase and undergo the same automated testing.
@@ -58,7 +62,7 @@ Except where noted otherwise, the rest of this page discusses the native executa
 [[homebrew]]
 === Homebrew
 
-Release versions can be installed with {uri-homebrew}[Homebrew].
+On macOS and Linux, release versions can be installed with {uri-homebrew}[Homebrew].
 
 ifdef::is-release-version[]
 To install Pkl, run:
@@ -110,7 +114,7 @@ chmod +x pkl
 
 This should print something similar to:
 
-[source,shell]
+[source]
 [subs="+attributes"]
 ----
 Pkl {pkl-version} (macOS, native)
@@ -144,7 +148,7 @@ chmod +x pkl
 
 This should print something similar to:
 
-[source,shell]
+[source]
 [subs="+attributes"]
 ----
 Pkl {pkl-version} (Linux, native)
@@ -166,7 +170,7 @@ chmod +x pkl
 
 This should print something similar to:
 
-[source,shell]
+[source]
 [subs="+attributes"]
 ----
 Pkl {pkl-version} (Linux, native)
@@ -174,6 +178,27 @@ Pkl {pkl-version} (Linux, native)
 
 NOTE: We currently do not support the aarch64 architecture for Alpine Linux.
 
+[[windows-executable]]
+=== Windows Executable
+
+[source,PowerShell]
+[subs="+attributes"]
+----
+Invoke-WebRequest '{uri-pkl-windows-download}' -OutFile pkl.exe
+.\pkl --version
+----
+
+This should print something similar to:
+
+[source]
+[subs="+attributes"]
+----
+Pkl {pkl-version} (Windows 10.0, native)
+----
+
+NOTE: We currently do not support the aarch64 architecture for Windows.
+
+[[java-executable]]
 === Java Executable
 
 [source,shell]
@@ -189,8 +214,11 @@ This should print something similar to:
 [source,shell]
 [subs="+attributes"]
 ----
-Pkl {pkl-version} (macOS 10.16, Java 11.0.9)
+Pkl {pkl-version} (macOS 14.2, Java 17.0.10)
 ----
+
+NOTE: The Java executable does not work as an executable file on Windows.
+However, it will work as a jar, for example, with `java -jar jpkl`.
 
 [[usage]]
 == Usage
@@ -803,3 +831,48 @@ These certificates can be overridden via either of the two options:
 Both these options will *replace* the default CA certificates bundled with Pkl. +
 The CLI option takes precedence over the certificates in `~/.pkl/cacerts/`. +
 Certificates need to be X.509 certificates in PEM format.
+
+[[http-proxy]]
+== HTTP Proxying
+
+When making HTTP(s) requests, Pkl can possibly make use of an HTTP proxy.
+
+There are two values that determine proxy settings; the proxy address and list of noproxy rules.
+When determining proxy settings, Pkl will look at the following locations, in order of precedence (lowest to highest):
+
+1. OS settings (on macOS, Windows, and GNOME environments)
+2. <<settings-file,Settings file>>
+3. xref:language-reference:index.adoc#projects[PklProject file]
+4. `--http-proxy` and `--http-no-proxy` CLI flags
+
+[NOTE]
+====
+The proxy and noproxy values are individually set.
+For example, using the `--http-no-proxy` flag but not the `--http-proxy` flag will cause Pkl to look at the PklProject file, then the settings file, then system settings for the proxy address.
+
+One exception to this rule is that setting a proxy address will cause Pkl to ignore any noproxy values set at the OS level.
+====
+
+Pkl only supports HTTP proxies, so neither HTTPS nor SOCKS proxies are supported.
+Pkl does not support authentication with a proxy.
+
+When specifying a proxy address, it must have scheme `http`, and may not contain anything other than a host and port.
+
+=== Proxy exclusions
+
+Pkl can be configured to bypass the proxy for specific requests via a proxy exclusion rule (i.e. the `--http-no-proxy` flag).
+It may be provided either as a hostname, an IP address, or an IP range via https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing#CIDR_notation[CIDR notation].
+When determining whether a proxy should be excluded, hostnames do not get resolved to their IP address.
+For example, a request to `localhost` will not match `--http-no-proxy=127.0.0.1`.
+
+For individual hosts (not CIDRs), ports can be specified.
+When no port is specified for a given host, connections to all ports bypass the proxy.
+
+A hostname will match all of its subdomains.
+For example, `example.com` will match `foo.example.com`, and `bar.foo.example.com`, but not `fooexample.com`.
+
+The value `*` is a special wildcard that matches all hosts.
+
+A port can optionally be specified. If omitted, it matches all ports.
+
+NOTE: Pkl follows the rules described in https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/#standardizing-no_proxy[Standardizing `no_proxy`], except it does not look at environment variables.

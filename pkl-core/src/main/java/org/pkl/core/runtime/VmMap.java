@@ -98,7 +98,9 @@ public final class VmMap extends VmValue implements Iterable<Map.Entry<Object, O
       @TruffleBoundary
       public Map.Entry<Object, Object> next() {
         var key = keyIterator.next();
-        return Map.entry(key, map.get(key));
+        var value = map.get(key);
+        assert value != null;
+        return Map.entry(key, value);
       }
 
       @Override
@@ -187,7 +189,9 @@ public final class VmMap extends VmValue implements Iterable<Map.Entry<Object, O
   public VmList values() {
     var builder = VmList.EMPTY.builder();
     for (var key : keyOrder) {
-      builder.add(map.get(key));
+      var value = map.get(key);
+      assert value != null;
+      builder.add(value);
     }
     return builder.build();
   }
@@ -196,7 +200,9 @@ public final class VmMap extends VmValue implements Iterable<Map.Entry<Object, O
   public VmList entries() {
     var builder = VmList.EMPTY.builder();
     for (var key : keyOrder) {
-      builder.add(new VmPair(key, map.get(key)));
+      var value = map.get(key);
+      assert value != null;
+      builder.add(new VmPair(key, value));
     }
     return builder.build();
   }
@@ -219,12 +225,35 @@ public final class VmMap extends VmValue implements Iterable<Map.Entry<Object, O
     }
   }
 
+  public VmMapping toMapping() {
+    var builder = new VmObjectBuilder(getLength());
+    for (var entry : this) {
+      builder.addEntry(VmUtils.getKey(entry), VmUtils.getValue(entry));
+    }
+    return builder.toMapping();
+  }
+
+  public VmDynamic toDynamic() {
+    var builder = new VmObjectBuilder(getLength());
+    for (var entry : this) {
+      var key = VmUtils.getKey(entry);
+      var value = VmUtils.getValue(entry);
+      if (key instanceof String) {
+        builder.addProperty(Identifier.get((String) key), value);
+      } else {
+        builder.addEntry(key, value);
+      }
+    }
+    return builder.toDynamic();
+  }
+
   @Override
   @TruffleBoundary
   public Map<Object, Object> export() {
     var result = CollectionUtils.newLinkedHashMap(keyOrder.size());
     for (var key : keyOrder) {
       var value = map.get(key);
+      assert value != null;
       result.put(VmValue.export(key), VmValue.export(value));
     }
     return result;
@@ -245,8 +274,8 @@ public final class VmMap extends VmValue implements Iterable<Map.Entry<Object, O
   public boolean equals(@Nullable Object other) {
     if (this == other) return true;
     //noinspection SimplifiableIfStatement
-    if (!(other instanceof VmMap)) return false;
-    return map.equals(((VmMap) other).map);
+    if (!(other instanceof VmMap vmMap)) return false;
+    return map.equals(vmMap.map);
   }
 
   @Override

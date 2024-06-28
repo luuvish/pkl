@@ -15,16 +15,14 @@
  */
 package org.pkl.core.module;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import org.pkl.core.runtime.VmContext;
-import org.pkl.core.util.HttpUtils;
 import org.pkl.core.util.IoUtils;
 
 /** Utilities for obtaining and using resolved module keys. */
@@ -56,6 +54,14 @@ public final class ResolvedModuleKeys {
     return new Virtual(original, uri, sourceText, cached);
   }
 
+  /**
+   * Creates a resolved module key that behaves like {@code delegate}, except with {@code original}
+   * as its original module key.
+   */
+  public static ResolvedModuleKey delegated(ResolvedModuleKey delegate, ModuleKey original) {
+    return new Delegated(delegate, original);
+  }
+
   private static class File implements ResolvedModuleKey {
     final ModuleKey original;
     final URI uri;
@@ -79,7 +85,16 @@ public final class ResolvedModuleKeys {
 
     @Override
     public String loadSource() throws IOException {
-      return Files.readString(path, StandardCharsets.UTF_8);
+      try {
+        return Files.readString(path, StandardCharsets.UTF_8);
+      } catch (AccessDeniedException e) {
+        // Windows throws `AccessDeniedException` when reading directories.
+        // Sync error between different OSes.
+        if (Files.isDirectory(path)) {
+          throw new IOException("Is a directory");
+        }
+        throw e;
+      }
     }
   }
 
@@ -106,14 +121,6 @@ public final class ResolvedModuleKeys {
 
     @Override
     public String loadSource() throws IOException {
-      if (HttpUtils.isHttpUrl(url)) {
-        var httpClient = VmContext.get(null).getHttpClient();
-        var request = HttpRequest.newBuilder(uri).build();
-        var response = httpClient.send(request, BodyHandlers.ofString());
-        HttpUtils.checkHasStatusCode200(response);
-        return response.body();
-      }
-
       return IoUtils.readString(url);
     }
   }
@@ -144,6 +151,32 @@ public final class ResolvedModuleKeys {
     @Override
     public String loadSource() {
       return sourceText;
+    }
+  }
+
+  private static class Delegated implements ResolvedModuleKey {
+
+    private final ResolvedModuleKey delegate;
+    private final ModuleKey original;
+
+    Delegated(ResolvedModuleKey delegate, ModuleKey original) {
+      this.delegate = delegate;
+      this.original = original;
+    }
+
+    @Override
+    public ModuleKey getOriginal() {
+      return original;
+    }
+
+    @Override
+    public URI getUri() {
+      return delegate.getUri();
+    }
+
+    @Override
+    public String loadSource() throws IOException {
+      return delegate.loadSource();
     }
   }
 }

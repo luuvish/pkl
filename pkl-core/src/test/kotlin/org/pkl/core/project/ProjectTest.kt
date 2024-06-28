@@ -1,16 +1,16 @@
 package org.pkl.core.project
 
-import org.pkl.commons.test.PackageServer
-import org.pkl.commons.writeString
-import org.pkl.core.*
-import org.pkl.core.packages.PackageUri
-import org.pkl.core.project.Project.EvaluatorSettings
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.pkl.commons.test.FileTestUtils
+import org.pkl.commons.test.PackageServer
+import org.pkl.commons.writeString
+import org.pkl.core.*
 import org.pkl.core.http.HttpClient
+import org.pkl.core.packages.PackageUri
+import org.pkl.core.evaluatorSettings.PklEvaluatorSettings
 import java.net.URI
 import java.nio.file.Path
 import java.util.regex.Pattern
@@ -40,7 +40,7 @@ class ProjectTest {
       listOf(Path.of("apiTest1.pkl"), Path.of("apiTest2.pkl")),
       listOf("PklProject", "PklProject.deps.json", ".**", "*.exe")
     )
-    val expectedSettings = EvaluatorSettings(
+    val expectedSettings = PklEvaluatorSettings(
       mapOf("two" to "2"),
       mapOf("one" to "1"),
       listOf("foo:", "bar:").map(Pattern::compile),
@@ -52,7 +52,8 @@ class ProjectTest {
         path.resolve("modulepath2/")
       ),
       Duration.ofMinutes(5.0),
-      path
+      path,
+      null
     )
     projectPath.writeString("""
       amends "pkl:Project"
@@ -116,7 +117,7 @@ class ProjectTest {
     """.trimIndent())
     val project = Project.loadFromPath(projectPath)
     assertThat(project.`package`).isEqualTo(expectedPackage)
-    assertThat(project.settings).isEqualTo(expectedSettings)
+    assertThat(project.evaluatorSettings).isEqualTo(expectedSettings)
     assertThat(project.tests).isEqualTo(listOf(path.resolve("test1.pkl"), path.resolve("test2.pkl")))
   }
 
@@ -137,7 +138,7 @@ class ProjectTest {
   @Test
   fun `evaluate project module -- invalid checksum`() {
     PackageServer().use { server ->
-      val projectDir = Path.of(javaClass.getResource("badProjectChecksum2/")!!.path)
+      val projectDir = Path.of(javaClass.getResource("badProjectChecksum2/")!!.toURI())
       val project = Project.loadFromPath(projectDir.resolve("PklProject"))
       val httpClient = HttpClient.builder()
         .addCertificates(FileTestUtils.selfSignedCertificate)

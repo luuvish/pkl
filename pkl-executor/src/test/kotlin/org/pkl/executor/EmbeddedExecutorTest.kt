@@ -2,8 +2,11 @@ package org.pkl.executor
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.condition.DisabledOnOs
+import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -12,6 +15,7 @@ import org.pkl.commons.test.FilteringClassLoader
 import org.pkl.commons.test.PackageServer
 import org.pkl.commons.toPath
 import org.pkl.core.Release
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -37,7 +41,7 @@ class EmbeddedExecutorTest {
     }
     override fun toString(): String = name
   }
-  
+
   companion object {
     @JvmStatic
     private val allTestExecutors: List<TestExecutor> by lazy {
@@ -194,9 +198,10 @@ class EmbeddedExecutorTest {
         Executors.embedded(listOf("/non/existing".toPath()))
     }
 
+    val sep = File.separatorChar
     assertThat(e.message)
       .contains("Cannot find Jar file")
-      .contains("/non/existing")
+      .contains("${sep}non${sep}existing")
   }
 
   @Test
@@ -424,9 +429,11 @@ class EmbeddedExecutorTest {
 
   @ParameterizedTest
   @MethodSource("getAllTestExecutors")
+  @DisabledOnOs(OS.WINDOWS, disabledReason = "Can't populate legacy cache dir on Windows")
   fun `evaluate a project dependency`(executor: TestExecutor, @TempDir tempDir: Path) {
     val cacheDir = tempDir.resolve("packages")
     PackageServer.populateCacheDir(cacheDir)
+    PackageServer.populateLegacyCacheDir(cacheDir)
     val projectDir = tempDir.resolve("project/")
     projectDir.createDirectories()
     projectDir.resolve("PklProject").toFile().writeText("""
@@ -471,7 +478,7 @@ class EmbeddedExecutorTest {
     )
     val result = executor.evaluatePath(pklFile) {
       allowedModules("file:", "package:", "projectpackage:", "https:")
-      allowedResources("prop:", "package:", "projectpackage:", "https:")
+      allowedResources("file:", "prop:", "package:", "projectpackage:", "https:")
       moduleCacheDir(cacheDir)
       projectDir(projectDir)
     }

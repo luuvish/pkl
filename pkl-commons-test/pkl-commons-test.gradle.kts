@@ -13,7 +13,6 @@ dependencies {
   api(libs.junitParams)
   api(projects.pklCommons) // for convenience
   implementation(libs.assertj)
-  runtimeOnly(projects.pklCerts)
 }
 
 /**
@@ -58,6 +57,11 @@ for (packageDir in file("src/main/files/packages").listFiles()!!) {
     }
     doLast {
       val outputFile = destinationDir.get().asFile.resolve("${packageDir.name}.json")
+      if (buildInfo.os.isWindows) {
+        val contents = outputFile.readText()
+        // workaround for https://github.com/gradle/gradle/issues/1151
+        outputFile.writeText(contents.replace("\r\n", "\n"))
+      }
       shasumFile.get().asFile.writeText(outputFile.computeChecksum())
     }
   }

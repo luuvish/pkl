@@ -382,6 +382,20 @@ public final class VmList extends VmCollection {
     return VmSet.create(rrbt);
   }
 
+  @TruffleBoundary
+  public VmListing toListing() {
+    var builder = new VmObjectBuilder(rrbt.size());
+    for (var elem : rrbt) builder.addElement(elem);
+    return builder.toListing();
+  }
+
+  @TruffleBoundary
+  public VmDynamic toDynamic() {
+    var builder = new VmObjectBuilder(rrbt.size());
+    for (var elem : rrbt) builder.addElement(elem);
+    return builder.toDynamic();
+  }
+
   @Override
   @TruffleBoundary
   public void force(boolean allowUndefinedValues) {
@@ -424,8 +438,8 @@ public final class VmList extends VmCollection {
   public boolean equals(@Nullable Object other) {
     if (this == other) return true;
     //noinspection SimplifiableIfStatement
-    if (!(other instanceof VmList)) return false;
-    return rrbt.equals(((VmList) other).rrbt);
+    if (!(other instanceof VmList list)) return false;
+    return rrbt.equals(list.rrbt);
   }
 
   @Override

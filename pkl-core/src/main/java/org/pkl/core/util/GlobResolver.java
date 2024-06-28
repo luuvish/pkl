@@ -22,25 +22,29 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.pkl.core.PklBugException;
 import org.pkl.core.SecurityManager;
 import org.pkl.core.SecurityManagerException;
 import org.pkl.core.module.ModuleKey;
 import org.pkl.core.module.PathElement;
 import org.pkl.core.runtime.ReaderBase;
 
-public class GlobResolver {
-  public static class InvalidGlobPatternException extends Exception {
+public final class GlobResolver {
+  private GlobResolver() {}
+
+  public static final class InvalidGlobPatternException extends Exception {
     public InvalidGlobPatternException(String message) {
       super(message);
     }
   }
 
-  public static class ResolvedGlobElement {
+  public static final class ResolvedGlobElement {
     private final String path;
 
     private final URI uri;
@@ -95,24 +99,24 @@ public class GlobResolver {
     sb.append("[[^/]&&[");
     var i = idx;
     switch (getNextChar(globPattern, i)) {
-      case '^':
+      case '^' -> {
         // verbatim; escape
         sb.append("\\^");
         i++;
-        break;
-      case '!':
+      }
+      case '!' -> {
         // negation
         sb.append("^");
         i++;
-        break;
-      case ']':
+      }
+      case ']' -> {
         // the first `]` in a character class is verbatim and not treated as a closing delimiter.
         sb.append(']');
         i++;
-        break;
-      case NULL:
-        throw new InvalidGlobPatternException(
-            ErrorMessages.create("invalidGlobMissingCharacterClassTerminator"));
+      }
+      case NULL ->
+          throw new InvalidGlobPatternException(
+              ErrorMessages.create("invalidGlobMissingCharacterClassTerminator"));
     }
     i++;
     var current = globPattern.charAt(i);
@@ -160,111 +164,81 @@ public class GlobResolver {
     for (var i = 0; i < globPattern.length(); i++) {
       var current = globPattern.charAt(i);
       switch (current) {
-        case '{':
-          {
-            if (inGroup) {
-              throw new InvalidGlobPatternException(
-                  ErrorMessages.create("invalidGlobNestedSubpattern"));
-            }
-            inGroup = true;
-            sb.append("(?:(?:");
-            break;
+        case '{' -> {
+          if (inGroup) {
+            throw new InvalidGlobPatternException(
+                ErrorMessages.create("invalidGlobNestedSubpattern"));
           }
-        case '}':
-          {
-            if (inGroup) {
-              inGroup = false;
-              sb.append("))");
-            } else {
-              sb.append('}');
-            }
-            break;
+          inGroup = true;
+          sb.append("(?:(?:");
+        }
+        case '}' -> {
+          if (inGroup) {
+            inGroup = false;
+            sb.append("))");
+          } else {
+            sb.append('}');
           }
-        case ',':
-          {
-            if (inGroup) {
-              sb.append(")|(?:");
-            } else {
-              sb.append(',');
-            }
-            break;
+        }
+        case ',' -> {
+          if (inGroup) {
+            sb.append(")|(?:");
+          } else {
+            sb.append(',');
           }
-        case '\\':
-          {
-            var next = getNextChar(globPattern, i);
-            if (next == NULL) {
-              throw new InvalidGlobPatternException(
-                  ErrorMessages.create("invalidGlobInvalidTerminatingCharacter"));
-            }
-            if (next != '?' && next != '*' && next != '[' && next != '{' && next != '\\') {
-              throw new InvalidGlobPatternException(
-                  ErrorMessages.create("invalidGlobInvalidEscapeCharacter", next));
-            }
-            sb.append('\\').append(next);
+        }
+        case '\\' -> {
+          var next = getNextChar(globPattern, i);
+          if (next == NULL) {
+            throw new InvalidGlobPatternException(
+                ErrorMessages.create("invalidGlobInvalidTerminatingCharacter"));
+          }
+          if (next != '?' && next != '*' && next != '[' && next != '{' && next != '\\') {
+            throw new InvalidGlobPatternException(
+                ErrorMessages.create("invalidGlobInvalidEscapeCharacter", next));
+          }
+          sb.append('\\').append(next);
+          i++;
+        }
+        case '[' -> i = consumeCharacterClass(globPattern, i, sb);
+        case '?' -> {
+          var next = getNextChar(globPattern, i);
+          if (next == '(') {
+            throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
+          }
+          sb.append(".");
+        }
+        case '*' -> {
+          var next = getNextChar(globPattern, i);
+          if (next == '(') {
+            throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
+          } else if (next == '*') {
+            // globstar, crosses directory boundaries
+            sb.append(".*");
             i++;
-            break;
+          } else {
+            // single wildcard matches everything up until the next directory character
+            sb.append("[^/]*");
           }
-        case '[':
-          {
-            i = consumeCharacterClass(globPattern, i, sb);
-            break;
+        }
+        case '+', '@' -> {
+          var next = getNextChar(globPattern, i);
+          if (next == '(') {
+            throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
           }
-        case '?':
-          {
-            var next = getNextChar(globPattern, i);
-            if (next == '(') {
-              throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
-            }
-            sb.append(".");
-            break;
+          sb.append("\\+");
+        }
+        case '!' -> {
+          var next = getNextChar(globPattern, i);
+          if (next == '(') {
+            throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
           }
-        case '*':
-          {
-            var next = getNextChar(globPattern, i);
-            if (next == '(') {
-              throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
-            } else if (next == '*') {
-              // globstar, crosses directory boundaries
-              sb.append(".*");
-              i++;
-            } else {
-              // single wildcard matches everything up until the next directory character
-              sb.append("[^/]*");
-            }
-            break;
-          }
-        case '+':
-        case '@':
-          {
-            var next = getNextChar(globPattern, i);
-            if (next == '(') {
-              throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
-            }
-            sb.append("\\+");
-            break;
-          }
-        case '!':
-          {
-            var next = getNextChar(globPattern, i);
-            if (next == '(') {
-              throw new InvalidGlobPatternException(ErrorMessages.create("invalidGlobExtGlob"));
-            }
-            sb.append("!");
-            break;
-          }
+          sb.append("!");
+        }
+
           // no special meaning in glob patterns but have special meaning in regex.
-        case '.':
-        case '(':
-        case '%':
-        case '^':
-        case '$':
-        case '|':
-          {
-            sb.append("\\").append(current);
-            break;
-          }
-        default:
-          sb.append(current);
+        case '.', '(', '%', '^', '$', '|' -> sb.append("\\").append(current);
+        default -> sb.append(current);
       }
     }
     if (inGroup) {
@@ -278,7 +252,7 @@ public class GlobResolver {
       ReaderBase reader,
       URI globUri,
       Pattern pattern,
-      ArrayList<ResolvedGlobElement> result)
+      Map<String, ResolvedGlobElement> result)
       throws IOException, SecurityManagerException {
     var elements = reader.listElements(securityManager, globUri);
     for (var elem : sorted(elements)) {
@@ -289,7 +263,8 @@ public class GlobResolver {
         throw new IllegalArgumentException(e.getMessage(), e);
       }
       if (pattern.matcher(resolvedUri.toString()).matches()) {
-        result.add(new ResolvedGlobElement(resolvedUri.toString(), resolvedUri, false));
+        var path = resolvedUri.toString();
+        result.put(path, new ResolvedGlobElement(path, resolvedUri, false));
       }
     }
   }
@@ -400,7 +375,7 @@ public class GlobResolver {
       URI baseUri,
       String expandedGlobPatternSoFar,
       boolean hasAbsoluteGlob,
-      List<ResolvedGlobElement> result,
+      Map<String, ResolvedGlobElement> result,
       MutableLong listElementCallCount)
       throws IOException, SecurityManagerException, InvalidGlobPatternException {
     var isLeaf = idx == globPatternParts.length - 1;
@@ -412,7 +387,7 @@ public class GlobResolver {
         if (reader.hasElement(securityManager, newBaseUri)) {
           // Note: isDirectory is not meaningful here. Setting it to false is a way to skip setting
           // it.
-          result.add(new ResolvedGlobElement(newPath, newBaseUri, false));
+          result.put(newPath, new ResolvedGlobElement(newPath, newBaseUri, false));
         }
       } else {
         var newBaseUri = IoUtils.resolve(reader, baseUri, patternPart + "/");
@@ -442,7 +417,7 @@ public class GlobResolver {
               listElementCallCount);
       for (var element : matchedElements) {
         if (isLeaf) {
-          result.add(element);
+          result.put(element.getPath(), element);
         } else if (element.isDirectory()) {
           resolveHierarchicalGlob(
               securityManager,
@@ -493,7 +468,7 @@ public class GlobResolver {
    * <p>Each pair is the expanded form of the glob pattern, paired with its resolved absolute URI.
    */
   @TruffleBoundary
-  public static List<ResolvedGlobElement> resolveGlob(
+  public static Map<String, ResolvedGlobElement> resolveGlob(
       SecurityManager securityManager,
       ReaderBase reader,
       ModuleKey enclosingModuleKey,
@@ -501,7 +476,7 @@ public class GlobResolver {
       String globPattern)
       throws IOException, SecurityManagerException, InvalidGlobPatternException {
 
-    var result = new ArrayList<ResolvedGlobElement>();
+    var result = new LinkedHashMap<String, ResolvedGlobElement>();
     var hasAbsoluteGlob = globPattern.matches("\\w+:.*");
 
     if (reader.hasHierarchicalUris()) {
@@ -512,11 +487,18 @@ public class GlobResolver {
       if (globParts.length == 0) {
         var resolvedUri = IoUtils.resolve(reader, enclosingUri, globPattern);
         if (reader.hasElement(securityManager, resolvedUri)) {
-          result.add(new ResolvedGlobElement(globPattern, resolvedUri, true));
+          result.put(globPattern, new ResolvedGlobElement(globPattern, resolvedUri, true));
         }
         return result;
       }
-      var baseUri = enclosingModuleKey.resolveUri(enclosingUri, URI.create(basePath));
+      URI baseUri;
+      try {
+        baseUri = IoUtils.resolve(securityManager, enclosingModuleKey, URI.create(basePath));
+      } catch (URISyntaxException e) {
+        // assertion: this is only thrown if the pattern starts with a triple-dot import.
+        // the language will throw an error if glob imports is combined with triple-dots.
+        throw new PklBugException(e);
+      }
 
       resolveHierarchicalGlob(
           securityManager,

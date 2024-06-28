@@ -7,6 +7,7 @@ import org.junit.platform.engine.support.descriptor.EngineDescriptor
 import org.pkl.commons.test.FileTestUtils
 import org.pkl.commons.test.InputOutputTestEngine
 import org.pkl.commons.test.PackageServer
+import org.pkl.commons.test.PklExecutablePaths
 import org.pkl.core.http.HttpClient
 import org.pkl.core.project.Project
 import org.pkl.core.util.IoUtils
@@ -37,10 +38,15 @@ abstract class AbstractLanguageSnippetTestsEngine : InputOutputTestEngine() {
   internal val selection: String = ""
 
   protected val packageServer: PackageServer = PackageServer()
-  
+
   override val includedTests: List<Regex> = listOf(Regex(".*$selection\\.pkl"))
 
-  override val excludedTests: List<Regex> = listOf(Regex(".*/native/.*"))
+  override val excludedTests: List<Regex> = buildList { 
+    add(Regex(".*/native/.*"))
+    if (IoUtils.isWindows()) {
+      addAll(windowsExcludedTests)
+    }
+  }
 
   override val inputDir: Path = snippetsDir.resolve("input")
 
@@ -51,7 +57,7 @@ abstract class AbstractLanguageSnippetTestsEngine : InputOutputTestEngine() {
     else parent?.getProjectDir()
 
   override fun expectedOutputFileFor(inputFile: Path): Path {
-    val relativePath = inputDir.relativize(inputFile).toString()
+    val relativePath = IoUtils.relativize(inputFile, inputDir).toString()
     val stdoutPath =
       if (relativePath.matches(hiddenExtensionRegex)) relativePath.dropLast(4)
       else relativePath.dropLast(3) + "pcf"
@@ -62,12 +68,17 @@ abstract class AbstractLanguageSnippetTestsEngine : InputOutputTestEngine() {
     // disable SHA verification for packages
     IoUtils.setTestMode()
   }
-  
+
   override fun afterAll() {
     packageServer.close()
   }
-  
-  protected fun String.stripFilePaths() = replace(snippetsDir.toString(), "/\$snippetsDir")
+
+  private val replacement by lazy {
+    if (snippetsDir.root.toString() != "/") "\$snippetsDir" else "/\$snippetsDir"
+  } 
+
+  protected fun String.stripFilePaths(): String =
+    replace(IoUtils.toNormalizedPathString(snippetsDir), replacement)
 
   protected fun String.stripLineNumbers() = replace(lineNumberRegex) { result ->
     // replace line number with equivalent number of 'x' characters to keep formatting intact
@@ -79,6 +90,22 @@ abstract class AbstractLanguageSnippetTestsEngine : InputOutputTestEngine() {
   // can't think of a better solution right now
   protected fun String.stripVersionCheckErrorMessage() =
     replace("Pkl version is ${Release.current().version()}", "Pkl version is xxx")
+
+  protected fun String.stripStdlibLocationSha(): String {
+    // Logic must be kept in-sync with `doc-package-info.pkl`.
+    val commitIsh =
+      if (Release.current().version().isNormal) Release.current().version()
+      else Release.current().commitId()
+    return replace(
+      "https://github.com/apple/pkl/blob/${commitIsh}/stdlib/",
+      "https://github.com/apple/pkl/blob/\$commitId/stdlib/"
+    )
+  }
+
+  protected fun String.withUnixLineEndings(): String {
+    return if (System.lineSeparator() == "\r\n") replace("\r\n", "\n")
+      else this
+  }
 }
 
 class LanguageSnippetTestsEngine : AbstractLanguageSnippetTestsEngine() {
@@ -140,9 +167,9 @@ class LanguageSnippetTestsEngine : AbstractLanguageSnippetTestsEngine() {
         .stripVersionCheckErrorMessage()
     }
 
-    val stderr = logWriter.toString()
+    val stderr = logWriter.toString().withUnixLineEndings()
 
-    return (success && stderr.isBlank()) to (output + stderr).stripFilePaths().stripWebsite()
+    return (success && stderr.isBlank()) to (output + stderr).stripFilePaths().stripWebsite().stripStdlibLocationSha()
   }
 }
 
@@ -213,13 +240,14 @@ abstract class AbstractNativeLanguageSnippetTestsEngine : AbstractLanguageSnippe
     val process = builder.start()
     return try {
       val (out, err) = listOf(process.inputStream, process.errorStream)
-        .map { it.reader().readText() }
+        .map { it.reader().readText().withUnixLineEndings() }
       val success = process.waitFor() == 0 && err.isBlank()
       success to (out + err)
         .stripFilePaths()
         .stripLineNumbers()
         .stripWebsite()
         .stripVersionCheckErrorMessage()
+        .stripStdlibLocationSha()
     } finally {
       process.destroy()
     }
@@ -227,26 +255,36 @@ abstract class AbstractNativeLanguageSnippetTestsEngine : AbstractLanguageSnippe
 }
 
 class MacAmd64LanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
-  override val pklExecutablePath: Path = rootProjectDir.resolve("pkl-cli/build/executable/pkl-macos-amd64")
+  override val pklExecutablePath: Path = PklExecutablePaths.macAmd64
   override val testClass: KClass<*> = MacLanguageSnippetTests::class
 }
 
 class MacAarch64LanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
-  override val pklExecutablePath: Path = rootProjectDir.resolve("pkl-cli/build/executable/pkl-macos-aarch64")
+  override val pklExecutablePath: Path = PklExecutablePaths.macAarch64
   override val testClass: KClass<*> = MacLanguageSnippetTests::class
 }
 
 class LinuxAmd64LanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
-  override val pklExecutablePath: Path = rootProjectDir.resolve("pkl-cli/build/executable/pkl-linux-amd64")
+  override val pklExecutablePath: Path = PklExecutablePaths.linuxAmd64
   override val testClass: KClass<*> = LinuxLanguageSnippetTests::class
 }
 
 class LinuxAarch64LanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
-  override val pklExecutablePath: Path = rootProjectDir.resolve("pkl-cli/build/executable/pkl-linux-aarch64")
+  override val pklExecutablePath: Path = PklExecutablePaths.linuxAarch64
   override val testClass: KClass<*> = LinuxLanguageSnippetTests::class
 }
 
 class AlpineLanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
-  override val pklExecutablePath: Path = rootProjectDir.resolve("pkl-cli/build/executable/pkl-alpine-linux-amd64")
+  override val pklExecutablePath: Path = PklExecutablePaths.alpineAmd64
   override val testClass: KClass<*> = AlpineLanguageSnippetTests::class
+}
+
+// error message contains different file path on Windows
+private val windowsExcludedTests get() = listOf(Regex(".*missingProjectDeps/bug\\.pkl"))
+
+class WindowsLanguageSnippetTestsEngine : AbstractNativeLanguageSnippetTestsEngine() {
+  override val pklExecutablePath: Path = PklExecutablePaths.windowsAmd64
+  override val testClass: KClass<*> = WindowsLanguageSnippetTests::class
+  override val excludedTests: List<Regex> 
+    get() = super.excludedTests + windowsExcludedTests
 }

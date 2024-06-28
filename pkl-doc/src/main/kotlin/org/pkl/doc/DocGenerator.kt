@@ -26,6 +26,7 @@ import org.pkl.commons.deleteRecursively
 import org.pkl.core.ModuleSchema
 import org.pkl.core.PClassInfo
 import org.pkl.core.Version
+import org.pkl.core.util.IoUtils
 
 /**
  * Entry point for the low-level Pkldoc API.
@@ -44,7 +45,7 @@ class DocGenerator(
   modules: Map<DocPackageInfo, Collection<ModuleSchema>>,
 
   /**
-   * A function to resolve imports in [modules], [packageInfos], and [docsiteInfo].
+   * A function to resolve imports in [modules] and [docsiteInfo].
    *
    * Module `pkl.base` is resolved with this function even if not explicitly imported.
    */
@@ -121,12 +122,12 @@ class DocGenerator(
 
   private fun createSymlinks(currentPackagesData: List<PackageData>) {
     for (packageData in currentPackagesData) {
-      val basePath = outputDir.resolve(packageData.ref.pkg)
+      val basePath = outputDir.resolve(packageData.ref.pkg.pathEncoded)
       val src = basePath.resolve(packageData.ref.version)
       val dest = basePath.resolve("current")
       if (dest.exists() && dest.isSameFileAs(src)) continue
       dest.deleteIfExists()
-      dest.createSymbolicLinkPointingTo(basePath.relativize(src))
+      dest.createSymbolicLinkPointingTo(IoUtils.relativize(src, basePath))
     }
   }
 }

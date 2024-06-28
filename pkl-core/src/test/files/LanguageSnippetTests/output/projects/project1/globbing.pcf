@@ -32,7 +32,16 @@ examples {
     }
   }
   ["glob-import local project"] {
-    new {}
+    new {
+      ["@project2/penguin.pkl"] {
+        bird {
+          name = "Penguin"
+          favoriteFruit {
+            name = "Ice Fruit"
+          }
+        }
+      }
+    }
   }
   ["glob-import using dependency notation"] {
     Set("@birds/catalog/Ostritch.pkl", "@birds/catalog/Swallow.pkl")
@@ -250,6 +259,21 @@ examples {
           
           """
         base64 = "YW1lbmRzICIuLi9CaXJkLnBrbCIKCmltcG9ydCAiQGZydWl0aWVzL2NhdGFsb2cvYXBwbGUucGtsIgoKbmFtZSA9ICJTd2FsbG93IgoKZmF2b3JpdGVGcnVpdCA9IGFwcGxlCg=="
+      }
+    }
+  }
+  ["glob-import behind local project import"] {
+    new {
+      children {
+        ["children/a.pkl"] {
+          name = "a"
+        }
+        ["children/b.pkl"] {
+          name = "b"
+        }
+        ["children/c.pkl"] {
+          name = "c"
+        }
       }
     }
   }

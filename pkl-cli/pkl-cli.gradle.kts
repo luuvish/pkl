@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+
 plugins {
   pklAllProjects
   pklKotlinLibrary
@@ -33,6 +36,9 @@ val stagedMacAarch64Executable: Configuration by configurations.creating
 val stagedLinuxAmd64Executable: Configuration by configurations.creating
 val stagedLinuxAarch64Executable: Configuration by configurations.creating
 val stagedAlpineLinuxAmd64Executable: Configuration by configurations.creating
+val stagedWindowsAmd64Executable: Configuration by configurations.creating
+
+val certs: SourceSet by sourceSets.creating
 
 dependencies {
   compileOnly(libs.svm)
@@ -55,6 +61,7 @@ dependencies {
   }
 
   testImplementation(projects.pklCommonsTest)
+  testImplementation(libs.wiremock)
 
   fun executableDir(name: String) = files(layout.buildDirectory.dir("executable/$name"))
   stagedMacAmd64Executable(executableDir("pkl-macos-amd64"))
@@ -63,6 +70,7 @@ dependencies {
   stagedLinuxAmd64Executable(executableDir("pkl-linux-amd64"))
   stagedLinuxAarch64Executable(executableDir("pkl-linux-aarch64"))
   stagedAlpineLinuxAmd64Executable(executableDir("pkl-alpine-linux-amd64"))
+  stagedWindowsAmd64Executable(executableDir("pkl-windows-amd64.exe"))
 }
 
 tasks.jar {
@@ -101,8 +109,8 @@ val javaExecutable by tasks.registering(ExecutableJar::class) {
 val testJavaExecutable by tasks.registering(Test::class) {
   testClassesDirs = tasks.test.get().testClassesDirs
   classpath =
-      // compiled test classes
-      sourceSets.test.get().output +
+    // compiled test classes
+    sourceSets.test.get().output +
       // java executable
       javaExecutable.get().outputs.files +
       // test-only dependencies
@@ -119,14 +127,20 @@ tasks.check {
 // To catch this and similar problems, test that Java executable starts successfully.
 val testStartJavaExecutable by tasks.registering(Exec::class) {
   dependsOn(javaExecutable)
-  val outputFile = layout.buildDirectory.file("testStartJavaExecutable") // dummy output to satisfy up-to-date check
+  val outputFile =
+    layout.buildDirectory.file("testStartJavaExecutable") // dummy output to satisfy up-to-date check
   outputs.file(outputFile)
-  
-  executable = javaExecutable.get().outputs.files.singleFile.toString()
-  args("--version")
-  
+
+  if (buildInfo.os.isWindows) {
+    executable = "java"
+    args("-jar", javaExecutable.get().outputs.files.singleFile.toString(), "--version")
+  } else {
+    executable = javaExecutable.get().outputs.files.singleFile.toString()
+    args("--version")
+  }
+
   doFirst { outputFile.get().asFile.delete() }
-  
+
   doLast { outputFile.get().asFile.writeText("OK") }
 }
 
@@ -134,78 +148,104 @@ tasks.check {
   dependsOn(testStartJavaExecutable)
 }
 
-fun Exec.configureExecutable(isEnabled: Boolean, outputFile: Provider<RegularFile>, extraArgs: List<String> = listOf()) {
-  enabled = isEnabled
-  dependsOn(":installGraalVm")
+val trustStore = layout.buildDirectory.dir("generateTrustStore/PklCARoots.p12")
+val trustStorePassword = "password" // no sensitive data to protect
 
-  inputs.files(sourceSets.main.map { it.output }).withPropertyName("mainSourceSets").withPathSensitivity(PathSensitivity.RELATIVE)
-  inputs.files(configurations.runtimeClasspath).withPropertyName("runtimeClasspath").withNormalizer(ClasspathNormalizer::class)
-inputs.files(file(buildInfo.graalVm.baseDir).resolve("bin/native-image")).withPropertyName("graalVmNativeImage").withPathSensitivity(PathSensitivity.ABSOLUTE)
+// generate a trust store for Pkl's built-in CA certificates
+val generateTrustStore by tasks.registering {
+  inputs.file(certs.resources.singleFile)
+  outputs.file(trustStore)
+  doLast {
+    val certificates = certs.resources.singleFile.inputStream().use { stream ->
+      CertificateFactory.getInstance("X.509").generateCertificates(stream)
+    }
+    KeyStore.getInstance("PKCS12").apply {
+      load(null, trustStorePassword.toCharArray()) // initialize empty trust store
+      for ((index, certificate) in certificates.withIndex()) {
+        setCertificateEntry("cert-$index", certificate)
+      }
+      val trustStoreFile = trustStore.get().asFile
+      trustStoreFile.parentFile.mkdirs()
+      trustStoreFile.outputStream().use { stream ->
+        store(stream, trustStorePassword.toCharArray())
+      }
+    }
+  }
+}
+
+fun Exec.configureExecutable(
+  graalVm: BuildInfo.GraalVm,
+  outputFile: Provider<RegularFile>,
+  extraArgs: List<String> = listOf()
+) {
+  dependsOn(generateTrustStore)
+
+  inputs.files(sourceSets.main.map { it.output })
+    .withPropertyName("mainSourceSets")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+  inputs.files(configurations.runtimeClasspath)
+    .withPropertyName("runtimeClasspath")
+    .withNormalizer(ClasspathNormalizer::class)
+  val nativeImageCommandName = if (buildInfo.os.isWindows) "native-image.cmd" else "native-image"
+  inputs.files(
+    file(graalVm.baseDir)
+      .resolve("bin/$nativeImageCommandName")
+  )
+    .withPropertyName("graalVmNativeImage")
+    .withPathSensitivity(PathSensitivity.ABSOLUTE)
   outputs.file(outputFile)
   outputs.cacheIf { true }
 
   workingDir(outputFile.map { it.asFile.parentFile })
-  executable = "${buildInfo.graalVm.baseDir}/bin/native-image"
+  executable = "${graalVm.baseDir}/bin/$nativeImageCommandName"
 
   // JARs to exclude from the class path for the native-image build.
-  val exclusions =
-    if (buildInfo.graalVm.isGraal22) emptyList()
-    else listOf(libs.truffleApi, libs.graalSdk).map { it.get().module.name }
+  val exclusions = listOf(libs.truffleApi, libs.graalSdk).map { it.get().module.name }
   // https://www.graalvm.org/22.0/reference-manual/native-image/Options/
   argumentProviders.add(CommandLineArgumentProvider {
-    listOf(
-        // currently gives a deprecation warning, but we've been told 
-        // that the "initialize everything at build time" *CLI* option is likely here to stay
-        "--initialize-at-build-time="
-        ,"--no-fallback"
-        ,"-H:IncludeResources=org/pkl/core/stdlib/.*\\.pkl"
-        ,"-H:IncludeResources=org/jline/utils/.*"
-        ,"-H:IncludeResources=org/pkl/certs/PklCARoots.pem"
-        //,"-H:IncludeResources=org/pkl/core/Release.properties"
-        ,"-H:IncludeResourceBundles=org.pkl.core.errorMessages"
-        ,"--macro:truffle"
-        ,"-H:Class=org.pkl.cli.Main"
-        ,"-H:Name=${outputFile.get().asFile.name}"
-        //,"--native-image-info"
-        //,"-Dpolyglot.image-build-time.PreinitializeContexts=pkl"
-        // the actual limit (currently) used by native-image is this number + 1400 (idea is to compensate for Truffle's own nodes)
-        ,"-H:MaxRuntimeCompileMethods=1800"
-        ,"-H:+EnforceMaxRuntimeCompileMethods"
-        ,"--enable-url-protocols=http,https"
-        //,"--install-exit-handlers"
-        ,"-H:+ReportExceptionStackTraces"
-        ,"-H:-ParseRuntimeOptions" // disable automatic support for JVM CLI options (puts our main class in full control of argument parsing)
-        //,"-H:+PrintAnalysisCallTree"
-        //,"-H:PrintAnalysisCallTreeType=CSV"
-        //,"-H:+PrintImageObjectTree"
-        //,"--features=org.pkl.cli.svm.InitFeature"
-        //,"-H:Dump=:2"
-        //,"-H:MethodFilter=ModuleCache.getOrLoad*,VmLanguage.loadModule"
-        //,"-g"
-        //,"-verbose"
-        //,"--debug-attach"
-        //,"-H:+AllowVMInspection"
-        //,"-H:+PrintHeapHistogram"
-        //,"-H:+ReportDeletedElementsAtRuntime"
-        //,"-H:+PrintMethodHistogram"
-        //,"-H:+PrintRuntimeCompileMethods"
-        //,"-H:NumberOfThreads=1"
-        //,"-J-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime"
-        //,"-J-Dcom.oracle.truffle.aot=true"
-        //,"-J:-ea"
-        //,"-J:-esa"
-        // for use with https://www.graalvm.org/docs/tools/dashboard/
-        //,"-H:DashboardDump=dashboard.dump", "-H:+DashboardAll"
-        // native-image rejects non-existing class path entries -> filter
-        ,"--class-path"
-        ,((sourceSets.main.get().output + configurations.runtimeClasspath.get())
-            .filter { it.exists() && !exclusions.any { exclude -> it.name.contains(exclude) }})
-            .asPath
-        // make sure dev machine stays responsive (15% slowdown on my laptop)
-        ,"-J-XX:ActiveProcessorCount=${
-          Runtime.getRuntime().availableProcessors() / (if (buildInfo.os.isMacOsX && !buildInfo.isCiBuild) 4 else 1)
-        }"
-    ) + extraArgs
+    buildList {
+      // currently gives a deprecation warning, but we've been told 
+      // that the "initialize everything at build time" *CLI* option is likely here to stay
+      add("--initialize-at-build-time=")
+      // needed for messagepack-java (see https://github.com/msgpack/msgpack-java/issues/600)
+      add("--initialize-at-run-time=org.msgpack.core.buffer.DirectBufferAccess")
+      add("--no-fallback")
+      add("-Djavax.net.ssl.trustStore=${trustStore.get().asFile}")
+      add("-Djavax.net.ssl.trustStorePassword=$trustStorePassword")
+      add("-Djavax.net.ssl.trustStoreType=PKCS12")
+      // security property "ocsp.enable=true" is set in Main.kt
+      add("-Dcom.sun.net.ssl.checkRevocation=true")
+      add("-H:IncludeResources=org/pkl/core/stdlib/.*\\.pkl")
+      add("-H:IncludeResources=org/jline/utils/.*")
+      add("-H:IncludeResourceBundles=org.pkl.core.errorMessages")
+      add("--macro:truffle")
+      add("-H:Class=org.pkl.cli.Main")
+      add("-H:Name=${outputFile.get().asFile.name}")
+      // the actual limit (currently) used by native-image is this number + 1400 (idea is to compensate for Truffle's own nodes)
+      add("-H:MaxRuntimeCompileMethods=1800")
+      add("-H:+EnforceMaxRuntimeCompileMethods")
+      add("--enable-url-protocols=http,https")
+      add("-H:+ReportExceptionStackTraces")
+      // disable automatic support for JVM CLI options (puts our main class in full control of argument parsing)
+      add("-H:-ParseRuntimeOptions")
+      // quick build mode: 40% faster compilation, 20% smaller (but presumably also slower) executable
+      if (!buildInfo.isReleaseBuild) {
+        add("-Ob")
+      }
+      add("-march=compatibility")
+      // native-image rejects non-existing class path entries -> filter
+      add("--class-path")
+      val pathInput = sourceSets.main.get().output + configurations.runtimeClasspath.get()
+        .filter { it.exists() && !exclusions.any { exclude -> it.name.contains(exclude) } }
+      add(pathInput.asPath)
+      // make sure dev machine stays responsive (15% slowdown on my laptop)
+      val processors = Runtime.getRuntime().availableProcessors() /
+        if (buildInfo.os.isMacOsX && !buildInfo.isCiBuild) 4 else 1
+      add("-J-XX:ActiveProcessorCount=${processors}")
+      // Pass through all `HOMEBREW_` prefixed environment variables to allow build with shimmed tools.
+      addAll(environment.keys.filter { it.startsWith("HOMEBREW_") }.map { "-E$it" })
+      addAll(extraArgs)
+    }
   })
 }
 
@@ -213,21 +253,22 @@ inputs.files(file(buildInfo.graalVm.baseDir).resolve("bin/native-image")).withPr
  * Builds the pkl CLI for macOS/amd64.
  */
 val macExecutableAmd64: TaskProvider<Exec> by tasks.registering(Exec::class) {
-  configureExecutable(buildInfo.os.isMacOsX && buildInfo.graalVm.isGraal22, layout.buildDirectory.file("executable/pkl-macos-amd64"))
+  dependsOn(":installGraalVmAmd64")
+  configureExecutable(
+    buildInfo.graalVmAmd64,
+    layout.buildDirectory.file("executable/pkl-macos-amd64")
+  )
 }
 
 /**
  * Builds the pkl CLI for macOS/aarch64.
- *
- * This requires that GraalVM be set to version 23.0 or greater, because 22.x does not support this
- * os/arch pair.
  */
 val macExecutableAarch64: TaskProvider<Exec> by tasks.registering(Exec::class) {
+  dependsOn(":installGraalVmAarch64")
   configureExecutable(
-    buildInfo.os.isMacOsX && !buildInfo.graalVm.isGraal22,
+    buildInfo.graalVmAarch64,
     layout.buildDirectory.file("executable/pkl-macos-aarch64"),
     listOf(
-      "--initialize-at-run-time=org.msgpack.core.buffer.DirectBufferAccess",
       "-H:+AllowDeprecatedBuilderClassesOnImageClasspath"
     )
   )
@@ -237,7 +278,11 @@ val macExecutableAarch64: TaskProvider<Exec> by tasks.registering(Exec::class) {
  * Builds the pkl CLI for linux/amd64.
  */
 val linuxExecutableAmd64: TaskProvider<Exec> by tasks.registering(Exec::class) {
-  configureExecutable(buildInfo.os.isLinux && buildInfo.arch == "amd64", layout.buildDirectory.file("executable/pkl-linux-amd64"))
+  dependsOn(":installGraalVmAmd64")
+  configureExecutable(
+    buildInfo.graalVmAmd64,
+    layout.buildDirectory.file("executable/pkl-linux-amd64")
+  )
 }
 
 /**
@@ -247,7 +292,11 @@ val linuxExecutableAmd64: TaskProvider<Exec> by tasks.registering(Exec::class) {
  * ARM instances.
  */
 val linuxExecutableAarch64: TaskProvider<Exec> by tasks.registering(Exec::class) {
-  configureExecutable(buildInfo.os.isLinux && buildInfo.arch == "aarch64", layout.buildDirectory.file("executable/pkl-linux-aarch64"))
+  dependsOn(":installGraalVmAarch64")
+  configureExecutable(
+    buildInfo.graalVmAarch64,
+    layout.buildDirectory.file("executable/pkl-linux-aarch64")
+  )
 }
 
 /**
@@ -257,20 +306,47 @@ val linuxExecutableAarch64: TaskProvider<Exec> by tasks.registering(Exec::class)
  * Details: https://www.graalvm.org/22.0/reference-manual/native-image/ARM64/
  */
 val alpineExecutableAmd64: TaskProvider<Exec> by tasks.registering(Exec::class) {
+  dependsOn(":installGraalVmAmd64")
   configureExecutable(
-      buildInfo.os.isLinux && buildInfo.arch == "amd64" && buildInfo.hasMuslToolchain,
-      layout.buildDirectory.file("executable/pkl-alpine-linux-amd64"),
-      listOf(
-        "--static",
-        "--libc=musl",
-        "-H:CCompilerOption=-Wl,-z,stack-size=10485760",
-        "-Dorg.pkl.compat=alpine"
-      )
+    buildInfo.graalVmAmd64,
+    layout.buildDirectory.file("executable/pkl-alpine-linux-amd64"),
+    listOf("--static", "--libc=musl")
+  )
+}
+
+val windowsExecutableAmd64: TaskProvider<Exec> by tasks.registering(Exec::class) {
+  dependsOn(":installGraalVmAmd64")
+  configureExecutable(
+    buildInfo.graalVmAmd64,
+    layout.buildDirectory.file("executable/pkl-windows-amd64"),
+    listOf("-Dfile.encoding=UTF-8")
   )
 }
 
 tasks.assembleNative {
-  dependsOn(macExecutableAmd64, macExecutableAarch64, linuxExecutableAmd64, linuxExecutableAarch64, alpineExecutableAmd64)
+  when {
+    buildInfo.os.isMacOsX -> {
+      dependsOn(macExecutableAmd64)
+      if (buildInfo.arch == "aarch64") {
+        dependsOn(macExecutableAarch64)
+      }
+    }
+
+    buildInfo.os.isWindows -> {
+      dependsOn(windowsExecutableAmd64)
+    }
+
+    buildInfo.os.isLinux && buildInfo.arch == "aarch64" -> {
+      dependsOn(linuxExecutableAarch64)
+    }
+
+    buildInfo.os.isLinux && buildInfo.arch == "amd64" -> {
+      dependsOn(linuxExecutableAmd64)
+      if (buildInfo.hasMuslToolchain) {
+        dependsOn(alpineExecutableAmd64)
+      }
+    }
+  }
 }
 
 // make Java executable available to other subprojects
@@ -298,11 +374,13 @@ publishing {
 
       pom {
         url.set("https://github.com/apple/pkl/tree/main/pkl-cli")
-        description.set("""
+        description.set(
+          """
           Pkl CLI executable for Java.
           Can be executed directly on *nix (if the `java` command is found on the PATH) and with `java -jar` otherwise.
-          Requires Java 11 or higher.
-        """.trimIndent())
+          Requires Java 17 or higher.
+        """.trimIndent()
+        )
       }
     }
     create<MavenPublication>("macExecutableAmd64") {
@@ -370,6 +448,20 @@ publishing {
         description.set("Native Pkl CLI executable for linux/amd64 and statically linked to musl.")
       }
     }
+
+    create<MavenPublication>("windowsExecutableAmd64") {
+      artifactId = "pkl-cli-windows-amd64"
+      artifact(stagedWindowsAmd64Executable.singleFile) {
+        classifier = null
+        extension = "exe"
+        builtBy(stagedWindowsAmd64Executable)
+      }
+      pom {
+        name.set("pkl-cli-windows-amd64")
+        url.set("https://github.com/apple/pkl/tree/main/pkl-cli")
+        description.set("Native Pkl CLI executable for windows/amd64.")
+      }
+    }
   }
 }
 
@@ -380,5 +472,6 @@ signing {
   sign(publishing.publications["macExecutableAarch64"])
   sign(publishing.publications["macExecutableAmd64"])
   sign(publishing.publications["alpineLinuxExecutableAmd64"])
+  sign(publishing.publications["windowsExecutableAmd64"])
 }
 //endregion

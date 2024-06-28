@@ -26,7 +26,11 @@ dependencies {
   //
   // To debug shaded code in IntelliJ, temporarily remove the conditional.
   if (System.getProperty("idea.sync.active") == null) {
-    runtimeOnly(project(":pkl-tools", "fatJar"))
+    runtimeOnly(projects.pklTools) {
+      attributes {
+        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.SHADOWED))
+      }
+    }
   }
 
   testImplementation(projects.pklCommonsTest)
@@ -65,7 +69,7 @@ gradlePlugin {
 
 gradlePluginTests {
   // keep in sync with `PklPlugin.MIN_GRADLE_VERSION`
-  minGradleVersion = GradleVersion.version("7.2")
+  minGradleVersion = GradleVersion.version("8.1")
   maxGradleVersion = GradleVersion.version("8.99")
   skippedGradleVersions = listOf()
 }

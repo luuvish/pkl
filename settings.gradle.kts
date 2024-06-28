@@ -4,7 +4,6 @@ include("bench")
 include("docs")
 include("stdlib")
 
-include("pkl-certs")
 include("pkl-cli")
 include("pkl-codegen-java")
 include("pkl-codegen-kotlin")
@@ -35,8 +34,8 @@ dependencyResolutionManagement {
 }
 
 val javaVersion = JavaVersion.current()
-require(javaVersion.isJava11Compatible) {
-  "Project requires Java 11 or higher, but found ${javaVersion.majorVersion}."
+require(javaVersion.isCompatibleWith(JavaVersion.VERSION_17)) {
+  "Project requires Java 17 or higher, but found ${javaVersion.majorVersion}."
 }
 
 if (gradle.startParameter.taskNames.contains("updateDependencyLocks") ||

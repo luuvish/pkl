@@ -62,7 +62,7 @@ import org.pkl.core.util.EconomicMaps;
 import org.pkl.core.util.Nullable;
 
 public final class VmUtils {
-  /** See {@link MemberNode#shouldRunTypecheck(VirtualFrame)}. */
+  /** See {@link MemberNode#shouldRunTypeCheck(VirtualFrame)}. */
   @SuppressWarnings("JavadocReference")
   public static final Object SKIP_TYPECHECK_MARKER = new Object();
 
@@ -233,7 +233,7 @@ public final class VmUtils {
   @TruffleBoundary
   public static @Nullable Object readMemberOrNull(
       VmObjectLike receiver, Object memberKey, boolean checkType, IndirectCallNode callNode) {
-    assert (!(memberKey instanceof Identifier) || !((Identifier) memberKey).isLocalProp())
+    assert (!(memberKey instanceof Identifier identifier) || !identifier.isLocalProp())
         : "Must use ReadLocalPropertyNode for local properties.";
 
     final var cachedValue = receiver.getCachedValue(memberKey);
@@ -329,12 +329,12 @@ public final class VmUtils {
   }
 
   public static boolean isRenderDirective(Object value) {
-    return value instanceof VmTyped && isRenderDirective((VmTyped) value);
+    return value instanceof VmTyped typed && isRenderDirective(typed);
   }
 
   public static boolean isPcfRenderDirective(Object value) {
-    return value instanceof VmTyped
-        && ((VmTyped) value).getVmClass().getPClassInfo() == PClassInfo.PcfRenderDirective;
+    return value instanceof VmTyped typed
+        && typed.getVmClass().getPClassInfo() == PClassInfo.PcfRenderDirective;
   }
 
   @TruffleBoundary
@@ -348,8 +348,8 @@ public final class VmUtils {
 
   // implements same behavior as AnyNodes#getClass
   public static VmClass getClass(Object value) {
-    if (value instanceof VmValue) {
-      return ((VmValue) value).getVmClass();
+    if (value instanceof VmValue vmValue) {
+      return vmValue.getVmClass();
     }
     if (value instanceof String) {
       return BaseModule.getStringClass();
@@ -627,8 +627,8 @@ public final class VmUtils {
     // because constant type check wouldn't find the property (type)
     var isLocalTyped = property.isLocal() && typeNode != null;
 
-    if (bodyNode instanceof ConstantNode && !isLocalTyped) {
-      property.initConstantValue((ConstantNode) bodyNode);
+    if (bodyNode instanceof ConstantNode constantNode && !isLocalTyped) {
+      property.initConstantValue(constantNode);
       return property;
     }
 
@@ -661,8 +661,8 @@ public final class VmUtils {
     // because constant type check wouldn't find the property (type)
     var isLocalTyped = property.isLocal() && typeNode != null;
 
-    if (bodyNode instanceof ConstantNode && !isLocalTyped) {
-      property.initConstantValue((ConstantNode) bodyNode);
+    if (bodyNode instanceof ConstantNode constantNode && !isLocalTyped) {
+      property.initConstantValue(constantNode);
       return property;
     }
 
@@ -843,5 +843,10 @@ public final class VmUtils {
 
   public static int findAuxiliarySlot(VirtualFrame frame, Object identifier) {
     return frame.getFrameDescriptor().getAuxiliarySlots().getOrDefault(identifier, -1);
+  }
+
+  @TruffleBoundary
+  public static <K, V> V getMapValue(Map<K, V> map, K key) {
+    return map.get(key);
   }
 }
